@@ -1,0 +1,463 @@
+const fs = require('fs');
+const path = require('path');
+
+const { PUBLIC_DIR, loadConfig, loadData, resolveSiteUrl } = require('../lib/content-paths');
+const { resolveFeatures } = require('../lib/features');
+
+const features = resolveFeatures(loadConfig());
+
+// Data files belonging to a disabled feature are treated as empty, so they aren't published.
+const FILE_FEATURE = {
+    'education.json': 'education',
+    'publications.json': 'publications',
+    'projects.json': 'projects',
+    'work-experience.json': 'experience',
+    'research-experience.json': 'experience',
+    'teaching-experience.json': 'experience',
+    'skills.json': 'skills',
+    'awards.json': 'awards',
+    'news.json': 'news',
+    'service.json': 'services',
+    'talks.json': 'talks',
+};
+
+function loadJson(filename) {
+    const feature = FILE_FEATURE[filename];
+    if (feature && !features[feature]) return null;
+    const data = loadData(filename.replace(/\.json$/, ''));
+    // Entries hidden from the site ("show_on_website": false) aren't published here either.
+    return Array.isArray(data) ? data.filter((e) => !e || typeof e !== 'object' || e.show_on_website !== false) : data;
+}
+
+// Clean markdown text of TeX escape characters if any
+function cleanText(text) {
+    if (!text) return '';
+    if (Array.isArray(text)) return text.map(cleanText).join('\n');
+    return text.replace(/\\_/g, '_')
+               .replace(/\\&/g, '&')
+               .replace(/\\%/g, '%')
+               .replace(/\\\$/g, '$')
+               .trim();
+}
+
+function getUniqueContactLinks(config) {
+    const links = [];
+    const seenLabels = new Set();
+    const seenUrls = new Set();
+
+    function normalizeUrl(url) {
+        if (!url) return '';
+        return url.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
+    }
+
+    function addLink(label, url) {
+        if (!url) return;
+        const normKey = normalizeUrl(url);
+        const normLabel = label.toLowerCase();
+        if (seenLabels.has(normLabel) || seenUrls.has(normKey)) return;
+        seenLabels.add(normLabel);
+        seenUrls.add(normKey);
+        links.push({ label, url });
+    }
+
+    if (config.resume_contact?.website_url) addLink('Website', config.resume_contact.website_url);
+    if (config.email) addLink('Email', config.email);
+    if (config.resume_contact?.github) addLink('GitHub', `https://${config.resume_contact.github}`);
+    if (config.resume_contact?.linkedin) addLink('LinkedIn', `https://${config.resume_contact.linkedin}`);
+
+    if (config.footerLinks) {
+        for (const [k, v] of Object.entries(config.footerLinks)) {
+            addLink(k, v);
+        }
+    }
+
+    if (config.resume) {
+        const resumeUrl = `${resolveSiteUrl(config)}${config.resume}`;
+        addLink('CV / Resume', resumeUrl);
+    }
+
+    return links;
+}
+
+function generateLlmsTxt() {
+    const config = loadConfig();
+    const education = loadJson('education.json') || [];
+    const publications = loadJson('publications.json') || [];
+    const projects = loadJson('projects.json') || [];
+    const skills = loadJson('skills.json') || {};
+    const awards = loadJson('awards.json') || [];
+    const service = loadJson('service.json') || [];
+
+    const lines = [];
+
+    // Header & Summary
+    lines.push(`# ${config.name || 'Portfolio'}`);
+    lines.push('');
+    lines.push(`> ${cleanText(config.intro || '')}`);
+    lines.push('');
+
+    // Contact & Quick Links
+    lines.push('## Contact & Links');
+    const contactLinks = getUniqueContactLinks(config);
+    for (const { label, url } of contactLinks) {
+        lines.push(`- **${label}**: ${url}`);
+    }
+    lines.push('');
+
+    // Education
+    if (education.length > 0) {
+        lines.push('## Education');
+        for (const edu of education) {
+            if (edu.show_on_website !== false) {
+                const period = [edu.start, edu.end].filter(Boolean).join(' – ');
+                lines.push(`- **${edu.degree} in ${edu.major}**, ${edu.university} (${period})`);
+                if (edu.description) {
+                    lines.push(`  ${cleanText(edu.description)}`);
+                }
+            }
+        }
+        lines.push('');
+    }
+
+    // Key Publications
+    if (publications.length > 0) {
+        lines.push('## Key Publications & Pre-prints');
+        for (const pub of publications) {
+            if (pub.show_on_website !== false) {
+                const authorsStr = (pub.authors || []).join(', ');
+                const venueStr = pub.conference || pub.type || '';
+                const badgeStr = pub.badge ? ` **[${pub.badge}]**` : '';
+                const linksStr = pub.links ? Object.entries(pub.links).map(([k, v]) => `[${k}](${v})`).join(' | ') : '';
+                lines.push(`- **${cleanText(pub.title)}**${badgeStr}`);
+                lines.push(`  Authors: ${authorsStr}`);
+                if (venueStr) lines.push(`  Venue: ${venueStr}`);
+                if (pub.badge) lines.push(`  Recognition: ${pub.badge}`);
+                if (pub.description) lines.push(`  Summary: ${cleanText(pub.description)}`);
+                if (linksStr) lines.push(`  Links: ${linksStr}`);
+                lines.push('');
+            }
+        }
+    }
+
+    // Core Research & Projects
+    if (projects.length > 0) {
+        lines.push('## Selected Research & Projects');
+        for (const proj of projects) {
+            if (proj.show_on_website !== false) {
+                const period = [proj.start, proj.end].filter(Boolean).join(' – ');
+                const skillsStr = proj.skills ? ` (${proj.skills.join(', ')})` : '';
+                lines.push(`- **${cleanText(proj.title)}**${skillsStr} [${period}]`);
+                if (proj.description) lines.push(`  ${cleanText(proj.description)}`);
+                if (proj.links) {
+                    const pLinks = Object.entries(proj.links).map(([k, v]) => `[${k}](${v})`).join(' | ');
+                    lines.push(`  Links: ${pLinks}`);
+                }
+                lines.push('');
+            }
+        }
+    }
+
+    // Awards & Honors
+    if (awards.length > 0) {
+        lines.push('## Awards & Honors');
+        for (const award of awards) {
+            if (award.show_on_website !== false) {
+                const awarderStr = (award.awarder || award.issuer) ? ` - ${award.awarder || award.issuer}` : '';
+                const dateStr = (award.date || award.year) ? ` (${award.date || award.year})` : '';
+                lines.push(`- **${cleanText(award.title)}**${awarderStr}${dateStr}`);
+                if (award.description) lines.push(`  ${cleanText(award.description)}`);
+            }
+        }
+        lines.push('');
+    }
+
+    // Academic & Professional Service
+    if (service.length > 0) {
+        lines.push('## Academic & Professional Service');
+        for (const s of service) {
+            if (typeof s === 'string') {
+                lines.push(cleanText(s));
+            } else if (s.category && Array.isArray(s.items)) {
+                lines.push(`- **${s.category}**:`);
+                for (const item of s.items) {
+                    const yearsStr = Array.isArray(item.years) ? item.years.join(', ') : item.years || '';
+                    const linkStr = item.link ? ` [Link](${item.link})` : '';
+                    lines.push(`  - ${item.name}${yearsStr ? ` (${yearsStr})` : ''}${linkStr}`);
+                }
+            } else if (typeof s === 'object') {
+                const role = s.role || s.title || s.name || '';
+                const org = s.organization || s.event || '';
+                const date = s.date || s.year || '';
+                lines.push(`- **${role}**${org ? `, ${org}` : ''}${date ? ` (${date})` : ''}`);
+                if (s.description) lines.push(`  ${cleanText(s.description)}`);
+            }
+        }
+        lines.push('');
+    }
+
+    // Technical Skills
+    if (Object.keys(skills).length > 0) {
+        lines.push('## Technical Skills');
+        if (skills.resume_skills) {
+            for (const [category, items] of Object.entries(skills.resume_skills)) {
+                if (Array.isArray(items)) {
+                    lines.push(`- **${category}**: ${items.join(', ')}`);
+                }
+            }
+        } else {
+            for (const [category, items] of Object.entries(skills)) {
+                if (Array.isArray(items)) {
+                    const catName = category.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                    lines.push(`- **${catName}**: ${items.join(', ')}`);
+                }
+            }
+        }
+        lines.push('');
+    }
+
+    // Detailed Files Notice
+    lines.push('## Full Details');
+    lines.push(`For complete research details, work history, full publication abstracts, talks, and teaching experience, see the full LLM document:`);
+    lines.push(`- [Full LLM Markdown Summary](${resolveSiteUrl(config)}/llms-full.txt)`);
+    lines.push('');
+
+    return lines.join('\n');
+}
+
+function generateLlmsFullTxt() {
+    const config = loadConfig();
+    const education = loadJson('education.json') || [];
+    const publications = loadJson('publications.json') || [];
+    const researchExp = loadJson('research-experience.json') || [];
+    const workExp = loadJson('work-experience.json') || [];
+    const projects = loadJson('projects.json') || [];
+    const skills = loadJson('skills.json') || {};
+    const awards = loadJson('awards.json') || [];
+    const news = loadJson('news.json') || [];
+    const service = loadJson('service.json') || [];
+    const talks = loadJson('talks.json') || [];
+    const teaching = loadJson('teaching-experience.json') || [];
+
+    const lines = [];
+
+    lines.push(`# ${config.name ? `${config.name} - Complete Portfolio & Academic Profile` : 'Portfolio & Academic Profile'}`);
+    lines.push('');
+    lines.push(`> ${cleanText(config.intro || '')}`);
+    lines.push('');
+
+    // Contact Information
+    lines.push('## Contact Information');
+    const contactLinks = getUniqueContactLinks(config);
+    for (const { label, url } of contactLinks) {
+        lines.push(`- **${label}**: ${url}`);
+    }
+    lines.push('');
+
+    // Education
+    if (education.length > 0) {
+        lines.push('## Education');
+        for (const edu of education) {
+            const period = [edu.start, edu.end].filter(Boolean).join(' – ');
+            lines.push(`### ${edu.degree} in ${edu.major}`);
+            lines.push(`- **Institution**: ${edu.university}`);
+            lines.push(`- **Timeline**: ${period}`);
+            if (edu.gpa) lines.push(`- **GPA**: ${edu.gpa}`);
+            if (edu.description) lines.push(`- **Details**: ${cleanText(edu.description)}`);
+            lines.push('');
+        }
+    }
+
+    // Research Experience
+    if (researchExp.length > 0) {
+        lines.push('## Research Experience');
+        for (const exp of researchExp) {
+            const period = [exp.start, exp.end].filter(Boolean).join(' – ');
+            lines.push(`### ${exp.title} - ${exp.organization}`);
+            lines.push(`- **Period**: ${period}`);
+            if (exp.location) lines.push(`- **Location**: ${exp.location}`);
+            lines.push(`- **Description**:`);
+            const bullets = cleanText(exp.description).split('\n');
+            for (const bullet of bullets) {
+                if (bullet.trim()) lines.push(`  - ${bullet.trim()}`);
+            }
+            lines.push('');
+        }
+    }
+
+    // Publications
+    if (publications.length > 0) {
+        lines.push('## Publications & Pre-prints');
+        for (const pub of publications) {
+            lines.push(`### ${cleanText(pub.title)}`);
+            lines.push(`- **Authors**: ${(pub.authors || []).join(', ')}`);
+            if (pub.conference) lines.push(`- **Venue**: ${pub.conference}`);
+            if (pub.badge) lines.push(`- **Recognition**: ${pub.badge}`);
+            if (pub.description) lines.push(`- **Abstract / Summary**: ${cleanText(pub.description)}`);
+            if (pub.tags && pub.tags.length > 0) lines.push(`- **Tags**: ${pub.tags.join(', ')}`);
+            if (pub.links) {
+                const pLinks = Object.entries(pub.links).map(([k, v]) => `[${k}](${v})`).join(' | ');
+                lines.push(`- **Links**: ${pLinks}`);
+            }
+            if (pub.bibtex) {
+                lines.push(`- **BibTeX**:`);
+                lines.push('```bibtex');
+                lines.push(pub.bibtex);
+                lines.push('```');
+            }
+            lines.push('');
+        }
+    }
+
+    // Projects
+    if (projects.length > 0) {
+        lines.push('## Projects');
+        for (const proj of projects) {
+            const period = [proj.start, proj.end].filter(Boolean).join(' – ');
+            lines.push(`### ${cleanText(proj.title)}`);
+            lines.push(`- **Timeline**: ${period}`);
+            if (proj.skills) lines.push(`- **Technologies**: ${proj.skills.join(', ')}`);
+            if (proj.description) lines.push(`- **Summary**: ${cleanText(proj.description)}`);
+            if (proj.collaborators && proj.collaborators.length > 0) {
+                const collabStr = proj.collaborators.map(c => `[${c.name}](${c.link})`).join(', ');
+                lines.push(`- **Collaborators**: ${collabStr}`);
+            }
+            if (proj.links) {
+                const pLinks = Object.entries(proj.links).map(([k, v]) => `[${k}](${v})`).join(' | ');
+                lines.push(`- **Links**: ${pLinks}`);
+            }
+            lines.push('');
+        }
+    }
+
+    // Work Experience
+    if (workExp.length > 0) {
+        lines.push('## Work Experience');
+        for (const work of workExp) {
+            const period = [work.start, work.end].filter(Boolean).join(' – ');
+            lines.push(`### ${work.title} - ${work.organization}`);
+            lines.push(`- **Period**: ${period}`);
+            if (work.location) lines.push(`- **Location**: ${work.location}`);
+            if (work.description) {
+                lines.push(`- **Description**:`);
+                const bullets = cleanText(work.description).split('\n');
+                for (const bullet of bullets) {
+                    if (bullet.trim()) lines.push(`  - ${bullet.trim()}`);
+                }
+            }
+            lines.push('');
+        }
+    }
+
+    // Talks
+    if (talks.length > 0) {
+        lines.push('## Talks & Presentations');
+        for (const talk of talks) {
+            if (typeof talk === 'string') {
+                lines.push(cleanText(talk));
+            } else if (typeof talk === 'object') {
+                const title = talk.title || talk.name || '';
+                const event = talk.event || talk.venue || '';
+                const date = talk.date || talk.year || '';
+                const link = talk.link || talk.url || '';
+                lines.push(`- **${cleanText(title)}**${event ? ` (${event}${date ? `, ${date}` : ''})` : date ? ` (${date})` : ''}`);
+                if (talk.description) lines.push(`  ${cleanText(talk.description)}`);
+                if (link) lines.push(`  [Link](${link})`);
+            }
+        }
+        lines.push('');
+    }
+
+    // Teaching Experience
+    if (teaching.length > 0) {
+        lines.push('## Teaching Experience');
+        for (const t of teaching) {
+            const period = [t.start, t.end].filter(Boolean).join(' – ');
+            const org = t.organization || t.institution || '';
+            lines.push(`- **${cleanText(t.title)}**${org ? `, ${org}` : ''}${period ? ` (${period})` : ''}`);
+            if (t.description) lines.push(`  ${cleanText(t.description)}`);
+        }
+        lines.push('');
+    }
+
+    // Awards
+    if (awards.length > 0) {
+        lines.push('## Awards & Honors');
+        for (const award of awards) {
+            const awarderStr = (award.awarder || award.issuer) ? ` - ${award.awarder || award.issuer}` : '';
+            const dateStr = (award.date || award.year) ? ` (${award.date || award.year})` : '';
+            lines.push(`- **${cleanText(award.title)}**${awarderStr}${dateStr}`);
+            if (award.description) lines.push(`  ${cleanText(award.description)}`);
+        }
+        lines.push('');
+    }
+
+    // News
+    if (news.length > 0) {
+        lines.push('## Recent News');
+        for (const item of news) {
+            if (typeof item === 'string') {
+                lines.push(cleanText(item));
+            } else if (typeof item === 'object') {
+                lines.push(`- **${item.date || ''}**: ${cleanText(item.content || item.title || '')}`);
+            }
+        }
+        lines.push('');
+    }
+
+    // Service
+    if (service.length > 0) {
+        lines.push('## Service & Outreach');
+        for (const s of service) {
+            if (typeof s === 'string') {
+                lines.push(cleanText(s));
+            } else if (s.category && Array.isArray(s.items)) {
+                lines.push(`- **${s.category}**:`);
+                for (const item of s.items) {
+                    const yearsStr = Array.isArray(item.years) ? item.years.join(', ') : item.years || '';
+                    const linkStr = item.link ? ` [Link](${item.link})` : '';
+                    lines.push(`  - ${item.name}${yearsStr ? ` (${yearsStr})` : ''}${linkStr}`);
+                }
+            } else if (typeof s === 'object') {
+                const role = s.role || s.title || s.name || '';
+                const org = s.organization || s.event || '';
+                const date = s.date || s.year || '';
+                lines.push(`- **${role}**${org ? `, ${org}` : ''}${date ? ` (${date})` : ''}`);
+                if (s.description) lines.push(`  ${cleanText(s.description)}`);
+            }
+        }
+        lines.push('');
+    }
+
+    // Skills
+    if (Object.keys(skills).length > 0) {
+        lines.push('## Technical & Language Skills');
+        if (skills.resume_skills) {
+            for (const [cat, items] of Object.entries(skills.resume_skills)) {
+                if (Array.isArray(items)) {
+                    lines.push(`- **${cat}**: ${items.join(', ')}`);
+                }
+            }
+        }
+        lines.push('');
+    }
+
+    return lines.join('\n');
+}
+
+function main() {
+    console.log('Generating LLM Markdown files...');
+    const llmsTxtContent = generateLlmsTxt();
+    const llmsFullTxtContent = generateLlmsFullTxt();
+
+    const llmsPath = path.join(PUBLIC_DIR, 'llms.txt');
+    const llmsFullPath = path.join(PUBLIC_DIR, 'llms-full.txt');
+    const indexMdPath = path.join(PUBLIC_DIR, 'index.md');
+
+    fs.writeFileSync(llmsPath, llmsTxtContent, 'utf-8');
+    fs.writeFileSync(llmsFullPath, llmsFullTxtContent, 'utf-8');
+    fs.writeFileSync(indexMdPath, llmsTxtContent, 'utf-8');
+
+    console.log(`Successfully generated:\n - ${llmsPath}\n - ${llmsFullPath}\n - ${indexMdPath}`);
+}
+
+main();

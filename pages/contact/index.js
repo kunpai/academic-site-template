@@ -1,0 +1,81 @@
+import Seo from '@/components/seo';
+import config, { featureGate, labels } from '@/lib/content';
+
+export const getStaticProps = featureGate('contact');
+import React, { useState } from 'react';
+import { Form, Button, Container } from 'react-bootstrap';
+
+export default function ContactForm() {
+  const [formData, setFormData] = useState({
+    name: '',
+    message: '',
+  });
+
+  const recipientEmail = config.email || '';
+
+  function handleChange(e) {
+    const { name, value } = e.target;
+    setFormData((prevFormData) => ({ ...prevFormData, [name]: value }));
+  };
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    const subject = encodeURIComponent(`Message from ${formData.name}`);
+    const body = encodeURIComponent(formData.message);
+    window.open(`mailto:${recipientEmail}?subject=${subject}&body=${body}`);
+
+    // Reset the form after submission
+    setFormData({
+      name: '',
+      message: '',
+    });
+  };
+
+  return (
+    <Container className='contact'>
+      <Seo title="Contact" path="/contact" description={`Get in touch with ${config.name} about research collaborations, talks, or opportunities.`} />
+      <h1>{labels.contactHeading}</h1>
+      <h6 className='text-secondary mb-3'>
+        {labels.contactIntro}
+      </h6>
+      {config.contactText ? (
+        <p className='text-secondary mb-3'>
+          {config.contactText.split('**').map((chunk, i) => i % 2 === 1 ? <strong key={i}>{chunk}</strong> : chunk)}
+        </p>
+      ) : (
+        <p className='text-secondary mb-3'>
+          You can contact me at <strong>{recipientEmail}</strong> or simply fill out the form below to redirect to an email client to send me a message directly.
+        </p>
+      )}
+      <Form onSubmit={handleSubmit}>
+
+        <Form.Group controlId="formName">
+          <Form.Label>Name</Form.Label>
+          <Form.Control
+            type="text"
+            name="name"
+            value={formData.name}
+            onChange={handleChange}
+            required
+          />
+        </Form.Group>
+
+        <Form.Group controlId="formMessage">
+          <Form.Label>Message</Form.Label>
+          <Form.Control
+            as="textarea"
+            rows={4}
+            name="message"
+            value={formData.message}
+            onChange={handleChange}
+            required
+          />
+        </Form.Group>
+
+        <Button variant="secondary" type="submit" className='mt-3'>
+          Submit
+        </Button>
+      </Form>
+    </Container>
+  );
+};

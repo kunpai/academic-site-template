@@ -1,0 +1,62 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+resume/
+*.log
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# every file in public/latex_src/ is ignored except .tex files
+public/latex_src/*
+!public/latex_src/*.tex
+
+# Local scratch
+Claude outputs/
+
+
+# Claude Code local session data
+.claude/
+
+# Python bytecode
+__pycache__/
+
+# Generated at build time (npm run build: prebuild + postbuild)
+/public/llms.txt
+/public/llms-full.txt
+/public/index.md
+/public/rss.xml
+/public/robots.txt
+/public/sitemap*.xml
+
+# Config backups written by npm run setup
+/content/*.bak*

@@ -1,0 +1,66 @@
+name: Build Resumes
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'content/**'
+      - 'scripts/**'
+  workflow_dispatch:
+
+jobs:
+  build-resumes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # The template repository (and a fresh copy before `npm run setup`) has no content/ yet.
+      - name: Check for content
+        id: content
+        run: |
+          if [ -f content/config.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; echo "No content/config.json; nothing to build."; fi
+
+      - name: Set up Python
+        if: steps.content.outputs.present == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install TeX Live
+        if: steps.content.outputs.present == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            texlive-latex-base \
+            texlive-latex-recommended \
+            texlive-fonts-recommended \
+            texlive-latex-extra \
+            texlive-fonts-extra
+
+      - name: Run Resume Generator and Compiler
+        if: steps.content.outputs.present == 'true'
+        run: |
+          chmod +x scripts/generate_resumes.py
+          python3 scripts/generate_resumes.py
+
+      - name: Commit and Push Compiled Resumes
+        if: steps.content.outputs.present == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Stage the compiled PDFs and TeX sources (llms.txt, rss.xml and the sitemap are built at deploy time)
+          git add public/*.pdf public/latex_src/*.tex
+          
+          # Commit only if there are modifications
+          if ! git diff --cached --exit-code; then
+            git commit -m "chore: auto-regenerate resumes from content/ [skip ci]"
+            git push
+          else
+            echo "No changes to the compiled resumes."
+          fi
